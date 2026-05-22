@@ -11,8 +11,9 @@ class ConfigMem:
 		self.hasFile = (configFile != "")
 		self.baseName = configFile
 		self.name = name
-		self.fullName = name
+		self.fullName = name + " Basic"
 		self.version = ""
+		self.isBasic = True
 		self.owner = None if (owner is None) else weakref.proxy(owner)
 		#build the item dictionary, if the configuration item list is valid
 		self.valDict = {}
@@ -41,6 +42,9 @@ class ConfigMem:
 			#copy the information into the releveant dictionaries
 			self.valDict[confItem[0]] = itemVal
 			self.typeDict[confItem[0]] = (confItem[1], confItem[2])
+
+	def __repr__(self):
+		return ("ConfigMem - " + self.fullName)
 
 	def load(self, version):
 		#this function tries to read the configuration file, if any, and load it into the configuration dictionary
@@ -76,6 +80,7 @@ class ConfigMem:
 			self.fullName = self.name + " " + versionStr
 			self.version = versionStr
 			self.valDict = newValDict
+			self.isBasic = False
 			return True
 		return False
 
@@ -110,6 +115,7 @@ class ConfigMem:
 		if not itemName in self.valDict: raise Exception(self.name + " - Cannot find configuration item " + itemName)
 		#assign the new value to the dictionary, if it is correct
 		self.valDict[itemName] = self._getValidValue(itemName, newVal)
+		self.isBasic = False
 
 	def loadDefault(self):
 		#this function loads all the current configuration item values into the their associated variables
@@ -121,6 +127,7 @@ class ConfigMem:
 	def saveDefault(self):
 		#this function tries to save all associated variable values into their respective configuration item values
 		if self.owner is None: raise Exception("This configuration object has no associated owner")
+		self.isBasic = False
 		itemNames = list(self.valDict.keys())
 		for itemName in itemNames:
 			self.valDict[itemName] = self._getValidValue(itemName, self.owner.__dict__[itemName])
