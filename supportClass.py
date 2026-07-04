@@ -5,7 +5,7 @@ import weakref
 import json
 
 class ConfigMem:
-	def __init__(self, name, configItems, configDir, configFile = "", owner = None):
+	def __init__(self, name, configItems, configDir, configFile = "", owner = None, autoSync = False):
 		#the configuration memory class is used to easily save and load configurations to and from text files
 		self.dirPath = configDir
 		self.hasFile = (configFile != "")
@@ -13,8 +13,8 @@ class ConfigMem:
 		self.name = name
 		self.fullName = name + " Basic"
 		self.version = ""
-		self.isBasic = True
 		self.owner = None if (owner is None) else weakref.proxy(owner)
+		self.autoSync = bool(autoSync) if (not owner is None) else False
 		#build the item dictionary, if the configuration item list is valid
 		self.valDict = {}
 		self.typeDict = {}
@@ -80,7 +80,7 @@ class ConfigMem:
 			self.fullName = self.name + " " + versionStr
 			self.version = versionStr
 			self.valDict = newValDict
-			self.isBasic = False
+			if self.autoSync: self.loadDefault()
 			return True
 		return False
 
@@ -96,6 +96,7 @@ class ConfigMem:
 			self.fullName = self.name + " " + versionStr
 		fileName = self.baseName + self.version
 		#get the configuration JSON string
+		if self.autoSync: self.saveDefault()
 		configStr = json.dumps(self.valDict)
 		#open or create the configuration file, then write the configuration to it
 		configFilePath = os.path.join(self.dirPath, fileName + ".txt")
@@ -115,7 +116,6 @@ class ConfigMem:
 		if not itemName in self.valDict: raise Exception(self.name + " - Cannot find configuration item " + itemName)
 		#assign the new value to the dictionary, if it is correct
 		self.valDict[itemName] = self._getValidValue(itemName, newVal)
-		self.isBasic = False
 
 	def loadDefault(self):
 		#this function loads all the current configuration item values into the their associated variables
@@ -127,7 +127,6 @@ class ConfigMem:
 	def saveDefault(self):
 		#this function tries to save all associated variable values into their respective configuration item values
 		if self.owner is None: raise Exception("This configuration object has no associated owner")
-		self.isBasic = False
 		itemNames = list(self.valDict.keys())
 		for itemName in itemNames:
 			self.valDict[itemName] = self._getValidValue(itemName, self.owner.__dict__[itemName])
