@@ -5,16 +5,17 @@ import weakref
 import json
 
 class ConfigMem:
-	def __init__(self, name, configItems, configDir, configFile = "", owner = None, autoSync = False):
+	def __init__(self, name, configItems, configDir, configFile = "", owner = None, autoSync = False, versionRequired = True):
 		#the configuration memory class is used to easily save and load configurations to and from text files
 		self.dirPath = configDir
 		self.hasFile = (configFile != "")
 		self.baseName = configFile
 		self.name = name
-		self.fullName = name + " Basic"
-		self.version = ""
+		self.fullName = name
+		self.version = None
 		self.owner = None if (owner is None) else weakref.proxy(owner)
 		self.autoSync = bool(autoSync) if (not owner is None) else False
+		self.versionRequired = bool(versionRequired)
 		#build the item dictionary, if the configuration item list is valid
 		self.valDict = {}
 		self.typeDict = {}
@@ -46,11 +47,11 @@ class ConfigMem:
 	def __repr__(self):
 		return ("ConfigMem - " + self.fullName)
 
-	def load(self, version):
+	def load(self, version = None):
 		#this function tries to read the configuration file, if any, and load it into the configuration dictionary
 		if not self.hasFile: raise Exception(self.name + " - No configuration file name specified")
-		if (version is None) or (version == ""): raise Exception(self.name + " - Configuration version must not be empty")
-		versionStr = str(version)
+		if self.versionRequired and ((version is None) or (version == "")): raise Exception(self.name + " - Configuration version must not be empty")
+		versionStr = "" if (version is None) else str(version)
 		name = self.baseName + versionStr
 		configFilePath = os.path.join(self.dirPath, name + ".txt")
 		if not os.path.isfile(configFilePath): raise Exception(self.name + " - Configuration file not found at " + configFilePath)
@@ -77,8 +78,8 @@ class ConfigMem:
 				else:
 					valid = (type(newValDict[key]) == valType)
 				if not valid: raise Exception(self.name + " - Item " + key + " is of incorrect type in configuration file")
-			self.fullName = self.name + " " + versionStr
-			self.version = versionStr
+			self.fullName = self.name + ("" if (version is None) else (" " + versionStr))
+			self.version = None if (version is None) else versionStr
 			self.valDict = newValDict
 			if self.autoSync: self.loadDefault()
 			return True
@@ -88,13 +89,13 @@ class ConfigMem:
 		#this function saves the current configuration to a text file
 		if not self.hasFile: raise Exception(self.name + " - No configuration file name specified")
 		#check that the version is not empty
-		if (version == "") or ((version is None) and (self.version == "")): raise Exception(self.name + " - Configuration version must not be empty")
+		if self.versionRequired and ((version == "") or ((version is None) and (self.version is None))): raise Exception(self.name + " - Configuration version must not be empty")
 		#if there is a version specified, switch the configuration file name to match
 		if not version is None:
 			versionStr = str(version)
 			self.version = versionStr
 			self.fullName = self.name + " " + versionStr
-		fileName = self.baseName + self.version
+		fileName = self.baseName + ("" if ((version is None) or (self.version is None)) else self.version)
 		#get the configuration JSON string
 		if self.autoSync: self.saveDefault()
 		configStr = json.dumps(self.valDict)
