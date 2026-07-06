@@ -19,10 +19,10 @@ class ConfigMem:
 		#build the item dictionary, if the configuration item list is valid
 		self.valDict = {}
 		self.typeDict = {}
-		if not type(configItems) in (tuple, list): raise Exception(self.name + " - Configuration items argument is not a list")
+		if not type(configItems) in (tuple, list): raise TypeError("CONFLIST", self.name + " - Configuration items argument is not a list")
 		for confItem in configItems:
-			if not type(confItem) in (tuple, list): raise Exception(self.name + " - One of the configuration items is not a list")
-			if not (len(confItem) == 4): raise Exception(self.name + " - One of the configuration items has the wrong number of elements")
+			if not type(confItem) in (tuple, list): raise TypeError("ITEMLIST", self.name + " - One of the configuration items is not a list")
+			if not (len(confItem) == 4): raise ValueError("ITEMLEN", self.name + " - One of the configuration items has the wrong number of elements")
 			#configuration items must have four elements : item key, item list depth, item type, and starting value
 			#attempt to convert the provided value to the desired type
 			if confItem[1] > 0:
@@ -30,12 +30,12 @@ class ConfigMem:
 				try:
 					itemVal = ConfigMem._convertListValueType(confItem[3], confItem[2], confItem[1])
 				except (TypeError, ValueError, OverflowError) as e:
-					raise Exception(self.name + " - The starting value for the " + confItem[0] + " configuration item does not match the item type, or the list is of the wrong depth") from e
+					raise TypeError("ITEMTYPE", self.name + " - The starting value for the " + confItem[0] + " configuration item does not match the item type, or the list is of the wrong depth") from e
 			else:
 				try:
 					itemVal = confItem[2](confItem[3])
 				except (TypeError, ValueError, OverflowError) as e:
-					raise Exception(self.name + " - The starting value for the " + confItem[0] + " configuration item does not match the item type") from e
+					raise TypeError("ITEMTYPE", self.name + " - The starting value for the " + confItem[0] + " configuration item does not match the item type") from e
 			#check that the item name matches an existing variable in the owner object, and create it if required
 			if (not self.owner is None) and (not confItem[0] in self.owner.__dict__):
 				#create the new attribute in the owner class
@@ -49,12 +49,12 @@ class ConfigMem:
 
 	def load(self, version = None):
 		#this function tries to read the configuration file, if any, and load it into the configuration dictionary
-		if not self.hasFile: raise Exception(self.name + " - No configuration file name specified")
-		if self.versionRequired and ((version is None) or (version == "")): raise Exception(self.name + " - Configuration version must not be empty")
+		if not self.hasFile: raise RuntimeError("NOFILENAME", self.name + " - No configuration file name specified")
+		if self.versionRequired and ((version is None) or (version == "")): raise RuntimeError("NOVERSION", self.name + " - Configuration version must not be empty")
 		versionStr = "" if (version is None) else str(version)
 		name = self.baseName + versionStr
 		configFilePath = os.path.join(self.dirPath, name + ".txt")
-		if not os.path.isfile(configFilePath): raise Exception(self.name + " - Configuration file not found at " + configFilePath)
+		if not os.path.isfile(configFilePath): raise IOError("NOFILE", self.name + " - Configuration file not found at " + configFilePath)
 		#load the confuguration file into the configuration dictionary
 		newValDict = self.valDict.copy()
 		if (os.path.getsize(configFilePath) != 0):
@@ -67,9 +67,9 @@ class ConfigMem:
 			try:
 				newValDict = json.loads(configStr)
 			except Exception as e:
-				raise Exception(self.name + " - Configuration file is not in JSON format") from e
+				raise RuntimeError("FILEFORMAT", self.name + " - Configuration file is not in JSON format") from e
 			#verify that the fields have the same name
-			if (newValDict.keys() != self.typeDict.keys()): raise Exception(self.name + " - Incorrect or missing field names when trying to load configuration file")
+			if (newValDict.keys() != self.typeDict.keys()): raise KeyError("KEYNAME", self.name + " - Incorrect or missing field names when trying to load configuration file")
 			#check that all fields have the correct type
 			for key in newValDict.keys():
 				listDepth, valType = self.typeDict[key]
@@ -77,7 +77,7 @@ class ConfigMem:
 					valid = ConfigMem._checkListValueType(newValDict[key], valType, listDepth)
 				else:
 					valid = (type(newValDict[key]) == valType)
-				if not valid: raise Exception(self.name + " - Item " + key + " is of incorrect type in configuration file")
+				if not valid: raise TypeError("ITEMTYPE", self.name + " - Item " + key + " is of incorrect type in configuration file")
 			self.fullName = self.name + ("" if (version is None) else (" " + versionStr))
 			self.version = None if (version is None) else versionStr
 			self.valDict = newValDict
@@ -87,9 +87,9 @@ class ConfigMem:
 
 	def save(self, version = None):
 		#this function saves the current configuration to a text file
-		if not self.hasFile: raise Exception(self.name + " - No configuration file name specified")
+		if not self.hasFile: raise RuntimeError("NOFILENAME", self.name + " - No configuration file name specified")
 		#check that the version is not empty
-		if self.versionRequired and ((version == "") or ((version is None) and (self.version is None))): raise Exception(self.name + " - Configuration version must not be empty")
+		if self.versionRequired and ((version == "") or ((version is None) and (self.version is None))): raise RuntimeError("NOVERSION", self.name + " - Configuration version must not be empty")
 		#if there is a version specified, switch the configuration file name to match
 		if not version is None:
 			versionStr = str(version)
@@ -110,24 +110,24 @@ class ConfigMem:
 		if itemName in self.valDict:
 			return self.valDict[itemName]
 		else:
-			raise Exception(self.name + " - Cannot find configuration item " + itemName)
+			raise NameError("ITEMNAME", self.name + " - Cannot find configuration item " + itemName)
 
 	def set(self, itemName, newVal):
 		#this function puts the provided new value into the item of the given name, if the type matches
-		if not itemName in self.valDict: raise Exception(self.name + " - Cannot find configuration item " + itemName)
+		if not itemName in self.valDict: raise NameError("ITEMNAME", self.name + " - Cannot find configuration item " + itemName)
 		#assign the new value to the dictionary, if it is correct
 		self.valDict[itemName] = self._getValidValue(itemName, newVal)
 
 	def loadDefault(self):
 		#this function loads all the current configuration item values into the their associated variables
-		if self.owner is None: raise Exception("This configuration object has no associated owner")
+		if self.owner is None: raise RuntimeError("NOOWNER", "This configuration object has no associated owner")
 		itemNames = list(self.valDict.keys())
 		for itemName in itemNames:
 			self.owner.__dict__[itemName] = self.valDict[itemName]
 
 	def saveDefault(self):
 		#this function tries to save all associated variable values into their respective configuration item values
-		if self.owner is None: raise Exception("This configuration object has no associated owner")
+		if self.owner is None: raise RuntimeError("NOOWNER", "This configuration object has no associated owner")
 		itemNames = list(self.valDict.keys())
 		for itemName in itemNames:
 			self.valDict[itemName] = self._getValidValue(itemName, self.owner.__dict__[itemName])
@@ -139,12 +139,12 @@ class ConfigMem:
 			try:
 				itemVal = ConfigMem._convertListValueType(newVal, valType, listDepth)
 			except (TypeError, ValueError, OverflowError) as e:
-				raise Exception(self.name + " - The new value for the " + itemName + " configuration item does not match the item type, or the list is of the wrong depth") from e
+				raise TypeError("ITEMTYPE", self.name + " - The new value for the " + itemName + " configuration item does not match the item type, or the list is of the wrong depth") from e
 		else:
 			try:
 				itemVal = valType(newVal) if (type(newVal) != valType) else newVal
 			except (TypeError, ValueError, OverflowError) as e:
-				raise Exception(self.name + " - The new value for the " + itemName + " configuration item does not match the item type") from e
+				raise TypeError("ITEMTYPE", self.name + " - The new value for the " + itemName + " configuration item does not match the item type") from e
 		return itemVal
 
 	def show(self, mustPrint = False):
