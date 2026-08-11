@@ -68,10 +68,16 @@ class ConfigMem:
 				newValDict = json.loads(configStr)
 			except Exception as e:
 				raise RuntimeError("FILEFORMAT", self.name + " - Configuration file is not in JSON format") from e
-			#verify that the fields have the same name
-			if (newValDict.keys() != self.typeDict.keys()): raise KeyError("KEYNAME", self.name + " - Incorrect or missing field names when trying to load configuration file")
-			#check that all fields have the correct type
-			for key in newValDict.keys():
+			#check if there are mismatch between the configuration keys and the file keys
+			fileKeySet = set(newValDict.keys())
+			confKeySet = set(self.typeDict.keys())
+			missingKeys = tuple(confKeySet - fileKeySet)
+			if (len(missingKeys) > 0): print(f"{self.name} - The following configuration keys were not found in the configuration file: {", ".join(missingKeys)}")
+			unknownKeys = tuple(fileKeySet - confKeySet)
+			if (len(unknownKeys) > 0): print(f"{self.name} - The following unknown keys were found in the configuration file: {", ".join(unknownKeys)}")
+			commonKeys = tuple(confKeySet & fileKeySet)
+			#check that all modified fields have the correct type
+			for key in commonKeys:
 				listDepth, valType = self.typeDict[key]
 				if listDepth > 0:
 					valid = ConfigMem._checkListValueType(newValDict[key], valType, listDepth)
@@ -80,7 +86,7 @@ class ConfigMem:
 				if not valid: raise TypeError("ITEMTYPE", self.name + " - Item " + key + " is of incorrect type in configuration file")
 			self.fullName = self.name + ("" if (version is None) else (" " + versionStr))
 			self.version = None if (version is None) else versionStr
-			self.valDict = newValDict
+			for key in commonKeys: self.valDict[key] = newValDict[key] #update the value dictionary with the new values
 			if self.autoSync: self.loadDefault()
 			return True
 		return False
