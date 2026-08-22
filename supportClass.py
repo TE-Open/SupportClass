@@ -3,8 +3,17 @@ import inspect
 import ast
 import weakref
 import json
+import dataclasses
 
 class ConfigMem:
+	@dataclasses.dataclass
+	class ConfigItem:
+		#this class represents a configuration item
+		name: str
+		isList: bool
+		type: type
+		value: ... #the value of a configuration item can be of any type
+
 	def __init__(self, name, configItems, configDir, configFile = "", owner = None, autoSync = False, versionRequired = True):
 		#the configuration memory class is used to easily save and load configurations to and from text files
 		self.dirPath = configDir
@@ -17,23 +26,23 @@ class ConfigMem:
 		self.autoSync = bool(autoSync) if (not owner is None) else False
 		self.versionRequired = bool(versionRequired)
 		#build the item dictionary, if the configuration item list is valid
-		self.valDict = {}
-		self.typeDict = {}
+		self.itemDict = {}
 		if not type(configItems) in (tuple, list): raise TypeError("CONFLIST", self.name + " - Configuration items argument is not a list")
 		for confItem in configItems:
 			if not type(confItem) in (tuple, list): raise TypeError("ITEMLIST", self.name + " - One of the configuration items is not a list")
 			if not (len(confItem) == 4): raise ValueError("ITEMLEN", self.name + " - One of the configuration items has the wrong number of elements")
-			#configuration items must have four elements : item key, item list depth, item type, and starting value
+			#configuration items must have four elements : item key, item list signal, item type, and starting value
 			#attempt to convert the provided value to the desired type
-			if confItem[1] > 0:
+			isList = bool(confItem[1])
+			if isList:
 				#if the item list depth is greater than 0, it is a list. attempt to convert it
 				try:
-					itemVal = ConfigMem._convertListValueType(confItem[3], confItem[2], confItem[1])
+					itemVal = ConfigMem._convertListValueType(confItem[3], confItem[2])
 				except (TypeError, ValueError, OverflowError) as e:
-					raise TypeError("ITEMTYPE", self.name + " - The starting value for the " + confItem[0] + " configuration item does not match the item type, or the list is of the wrong depth") from e
+					raise TypeError("ITEMTYPE", self.name + " - The starting value for the " + confItem[0] + " configuration item does not match the item type") from e
 			else:
 				try:
-					itemVal = confItem[2](confItem[3])
+					itemVal = confItem[2](confItem[3]) if (not confItem[2] is None) else confItem[3]
 				except (TypeError, ValueError, OverflowError) as e:
 					raise TypeError("ITEMTYPE", self.name + " - The starting value for the " + confItem[0] + " configuration item does not match the item type") from e
 			#check that the item name matches an existing variable in the owner object, and create it if required
@@ -41,8 +50,7 @@ class ConfigMem:
 				#create the new attribute in the owner class
 				setattr(self.owner, confItem[0], itemVal)
 			#copy the information into the releveant dictionaries
-			self.valDict[confItem[0]] = itemVal
-			self.typeDict[confItem[0]] = (confItem[1], confItem[2])
+			self.itemDict[confItem[0]] = ConfigMem.ConfigItem(name = confItem[0], isList = isList, type = confItem[2], value = itemVal)
 
 	def __repr__(self):
 		return ("ConfigMem - " + self.fullName)
@@ -56,7 +64,6 @@ class ConfigMem:
 		configFilePath = os.path.join(self.dirPath, name + ".txt")
 		if not os.path.isfile(configFilePath): raise IOError("NOFILE", self.name + " - Configuration file not found at " + configFilePath)
 		#load the confuguration file into the configuration dictionary
-		newValDict = self.valDict.copy()
 		if (os.path.getsize(configFilePath) != 0):
 			#open the file and attempt to load it into the value dicionary with JSON
 			#get the file contents
@@ -70,7 +77,7 @@ class ConfigMem:
 				raise RuntimeError("FILEFORMAT", self.name + " - Configuration file is not in JSON format") from e
 			#check if there are mismatch between the configuration keys and the file keys
 			fileKeySet = set(newValDict.keys())
-			confKeySet = set(self.typeDict.keys())
+			confKeySet = set(self.itemDict.keys())
 			missingKeys = tuple(confKeySet - fileKeySet)
 			if (len(missingKeys) > 0): print(f"{self.name} - The following configuration keys were not found in the configuration file: {", ".join(missingKeys)}")
 			unknownKeys = tuple(fileKeySet - confKeySet)
@@ -78,15 +85,14 @@ class ConfigMem:
 			commonKeys = tuple(confKeySet & fileKeySet)
 			#check that all modified fields have the correct type
 			for key in commonKeys:
-				listDepth, valType = self.typeDict[key]
-				if listDepth > 0:
-					valid = ConfigMem._checkListValueType(newValDict[key], valType, listDepth)
+				if self.itemDict[key].isList:
+					valid = ConfigMem._checkListValueType(newValDict[key], self.itemDict[key].type)
 				else:
-					valid = (type(newValDict[key]) == valType)
+					valid = (type(newValDict[key]) == self.itemDict[key].type) if (not self.itemDict[key].type is None) else True
 				if not valid: raise TypeError("ITEMTYPE", self.name + " - Item " + key + " is of incorrect type in configuration file")
 			self.fullName = self.name + ("" if (version is None) else (" " + versionStr))
 			self.version = None if (version is None) else versionStr
-			for key in commonKeys: self.valDict[key] = newValDict[key] #update the value dictionary with the new values
+			for key in commonKeys: self.itemDict[key].value = newValDict[key] #update the items with the new values
 			if self.autoSync: self.loadDefault()
 			return True
 		return False
@@ -104,7 +110,7 @@ class ConfigMem:
 		fileName = self.baseName + ("" if ((version is None) or (self.version is None)) else self.version)
 		#get the configuration JSON string
 		if self.autoSync: self.saveDefault()
-		configStr = json.dumps(self.valDict)
+		configStr = json.dumps({key:self.itemDict[key].value for key in self.itemDict})
 		#open or create the configuration file, then write the configuration to it
 		configFilePath = os.path.join(self.dirPath, fileName + ".txt")
 		file = open(configFilePath, "w")
@@ -113,84 +119,67 @@ class ConfigMem:
 
 	def get(self, itemName):
 		#this function tries to get a configuration item from the dictionary
-		if itemName in self.valDict:
-			return self.valDict[itemName]
+		if itemName in self.itemDict:
+			return self.itemDict[itemName].value
 		else:
 			raise NameError("ITEMNAME", self.name + " - Cannot find configuration item " + itemName)
 
 	def set(self, itemName, newVal):
 		#this function puts the provided new value into the item of the given name, if the type matches
-		if not itemName in self.valDict: raise NameError("ITEMNAME", self.name + " - Cannot find configuration item " + itemName)
+		if not itemName in self.itemDict: raise NameError("ITEMNAME", self.name + " - Cannot find configuration item " + itemName)
 		#assign the new value to the dictionary, if it is correct
-		self.valDict[itemName] = self._getValidValue(itemName, newVal)
+		self.itemDict[itemName].value = self._getValidValue(itemName, newVal)
 
 	def loadDefault(self):
 		#this function loads all the current configuration item values into the their associated variables
 		if self.owner is None: raise RuntimeError("NOOWNER", "This configuration object has no associated owner")
-		itemNames = list(self.valDict.keys())
+		itemNames = list(self.itemDict.keys())
 		for itemName in itemNames:
-			self.owner.__dict__[itemName] = self.valDict[itemName]
+			self.owner.__dict__[itemName] = self.itemDict[itemName].value
 
 	def saveDefault(self):
 		#this function tries to save all associated variable values into their respective configuration item values
 		if self.owner is None: raise RuntimeError("NOOWNER", "This configuration object has no associated owner")
-		itemNames = list(self.valDict.keys())
+		itemNames = list(self.itemDict.keys())
 		for itemName in itemNames:
-			self.valDict[itemName] = self._getValidValue(itemName, self.owner.__dict__[itemName])
+			self.itemDict[itemName].value = self._getValidValue(itemName, self.owner.__dict__[itemName])
 
 	def _getValidValue(self, itemName, newVal):
 		#this function checks that the provided value is of the correct type for the associated item, and converts it if necessary
-		listDepth, valType = self.typeDict[itemName]
-		if listDepth > 0:
+		if self.itemDict[itemName].isList:
 			try:
-				itemVal = ConfigMem._convertListValueType(newVal, valType, listDepth)
+				itemVal = ConfigMem._convertListValueType(newVal, self.itemDict[itemName].type)
 			except (TypeError, ValueError, OverflowError) as e:
 				raise TypeError("ITEMTYPE", self.name + " - The new value for the " + itemName + " configuration item does not match the item type, or the list is of the wrong depth") from e
 		else:
 			try:
-				itemVal = valType(newVal) if (type(newVal) != valType) else newVal
+				itemVal = self.itemDict[itemName].type(newVal) if ((not self.itemDict[itemName].type is None) and (type(newVal) != self.itemDict[itemName].type)) else newVal
 			except (TypeError, ValueError, OverflowError) as e:
 				raise TypeError("ITEMTYPE", self.name + " - The new value for the " + itemName + " configuration item does not match the item type") from e
 		return itemVal
 
 	def show(self, mustPrint = False):
 		#this function either prints or returns a string containing all the configuration items and values
-		itemNames = list(self.valDict.keys())
-		configStr = self.fullName + "\n"
-		for itemName in itemNames:
-			configStr += (itemName + " : " + str(self.valDict[itemName]) + "\n")
+		configStr = f"{self.fullName}\n{"\n".join([f"{itemName} : {self.itemDict[itemName].value}" for itemName in list(self.itemDict.keys())])}"
 		if mustPrint:
 			print(configStr)
 		else:
 			return configStr
 
-	def _checkListValueType(valList, valType, depth):
-		#this function checks that all base elements in the supplied list are of the supplied type, with the base ekelents being at the supplied depth
-		if (depth == 1):
-			#if we are at the base level, check that all elements are of the correct type
-			for i in range(len(valList)):
-				if type(valList[i]) != valType: return False
-			return True
-		elif (depth > 1):
-			#if we are not at the base level, check that all elements are lists or tuples, and recursively call this function on them
-			valid = True
-			for i in range(len(valList)):
-				valid = (valid and (type(valList[i]) in (tuple, list)) and ConfigMem._checkListValueType(valList[i], valType, depth - 1))
-				if not valid: return False
-			return True
+	def _checkListValueType(valList, valType):
+		#this function checks that all base elements in the supplied list are of the supplied type,
+		if (valType is None): return True
+		for i in range(len(valList)):
+			if type(valList[i]) != valType: return False
+		return True
 		return False
 
-	def _convertListValueType(valList, valType, depth):
+	def _convertListValueType(valList, valType):
 		#this function attemtps to convert all base elements in the supplied list to the supplied type, if necessary
+		if (valType is None): return valList
 		newValList = [None] * len(valList)
-		if (depth == 1):
-			#if we are at the base level, check that all elements are of the correct type, convert them if they are not, and return the new list
-			for i in range(len(valList)):
-				newValList[i] = valType(valList[i]) if (type(valList[i]) != valType) else valList[i]
-		else:
-			#if we are not at the base level, check that all elements are lists or tuples, and recursively call this function on them
-			for i in range(len(valList)):
-				newValList[i] = ConfigMem._convertListValueType(valList[i], valType, depth - 1)
+		for i in range(len(valList)):
+			newValList[i] = valType(valList[i]) if (type(valList[i]) != valType) else valList[i]
 		return tuple(newValList) if (type(valList) == tuple) else newValList
 
 class DoBase:
