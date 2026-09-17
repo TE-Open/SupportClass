@@ -131,7 +131,7 @@ class ConfigMem:
 			versionStr = str(version)
 			self.version = versionStr
 			self.fullName = self.name + " " + versionStr
-		fileName = self.baseName + ("" if ((version is None) or (self.version is None)) else self.version)
+		fileName = self.baseName + ("" if ((version is None) and (self.version is None)) else self.version)
 		#get the configuration JSON string
 		if self.autoSync: self.saveDefault()
 		configStr = json.dumps({key:ConfigMem._getItemSaveValue(self.itemDict[key]) for key in self.itemDict})
