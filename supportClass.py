@@ -23,9 +23,8 @@ class ConfigMem:
 		#the configuration memory class is used to easily save and load configurations to and from text files
 		self.dirPath = configDir
 		self.hasFile = (configFile != "")
-		self.baseName = configFile
+		self.baseFileName = configFile
 		self.name = name
-		self.fullName = name
 		self.version = None
 		self.owner = None if (owner is None) else weakref.proxy(owner)
 		self.autoSync = bool(autoSync) if (not owner is None) else False
@@ -67,23 +66,20 @@ class ConfigMem:
 			self.itemDict[confItem[0]] = ConfigMem.ConfigItem(confItem[0], isList, confItem[2], isValidClass, (confItem[2].__init__.__code__.co_argcount - 1) if isValidClass else 0, itemVal)
 
 	def __repr__(self):
-		return ("ConfigMem - " + self.fullName)
+		return f"ConfigMem - {self.name + ("" if (self.version is None) else f" {self.version}")}"
 
 	def load(self, version = None):
 		#this function tries to read the configuration file, if any, and load it into the configuration dictionary
 		if not self.hasFile: raise RuntimeError("NOFILENAME", self.name + " - No configuration file name specified")
 		if self.versionRequired and ((version is None) or (version == "")): raise RuntimeError("NOVERSION", self.name + " - Configuration version must not be empty")
-		versionStr = "" if (version is None) else str(version)
-		name = self.baseName + versionStr
-		configFilePath = os.path.join(self.dirPath, name + ".txt")
+		configFilePath = os.path.join(self.dirPath, self.getSaveFileName(version))
 		if not os.path.isfile(configFilePath): raise IOError("NOFILE", self.name + " - Configuration file not found at " + configFilePath)
 		#load the confuguration file into the configuration dictionary
 		if (os.path.getsize(configFilePath) != 0):
 			#open the file and attempt to load it into the value dicionary with JSON
 			#get the file contents
-			file = open(configFilePath, "r")
-			configStr = file.read()
-			file.close()
+			with open(configFilePath, "r") as file:
+				configStr = file.read()
 			#read the contents as JSON
 			try:
 				newValDict = json.loads(configStr)
@@ -114,8 +110,7 @@ class ConfigMem:
 					newValDict[key] = self.itemDict[key].type(*newValDict[key])
 				else:
 					if not (type(newValDict[key]) == self.itemDict[key].type): raise TypeError("ITEMTYPE", f"{self.name} - Item {key} is of incorrect type in configuration file")
-			self.fullName = self.name + ("" if (version is None) else (" " + versionStr))
-			self.version = None if (version is None) else versionStr
+			self.version = None if (version is None) else str(version)
 			for key in commonKeys: self.itemDict[key].value = newValDict[key] #update the items with the new values
 			if self.autoSync: self.loadDefault()
 			return True
@@ -126,20 +121,18 @@ class ConfigMem:
 		if not self.hasFile: raise RuntimeError("NOFILENAME", self.name + " - No configuration file name specified")
 		#check that the version is not empty
 		if self.versionRequired and ((version == "") or ((version is None) and (self.version is None))): raise RuntimeError("NOVERSION", self.name + " - Configuration version must not be empty")
-		#if there is a version specified, switch the configuration file name to match
-		if not version is None:
-			versionStr = str(version)
-			self.version = versionStr
-			self.fullName = self.name + " " + versionStr
-		fileName = self.baseName + ("" if ((version is None) and (self.version is None)) else self.version)
+		#if there is a version specified, switch the configuration version to match
+		if not version is None: self.version = str(version)
 		#get the configuration JSON string
 		if self.autoSync: self.saveDefault()
 		configStr = json.dumps({key:ConfigMem._getItemSaveValue(self.itemDict[key]) for key in self.itemDict})
 		#open or create the configuration file, then write the configuration to it
-		configFilePath = os.path.join(self.dirPath, fileName + ".txt")
-		file = open(configFilePath, "w")
-		file.write(configStr)
-		file.close()
+		with open(os.path.join(self.dirPath, self.getSaveFileName(version)), "w") as file:
+			file.write(configStr)
+
+	def getSaveFileName(self, version = None):
+		#this function returns the file name for the current config object with the given version
+		return self.baseFileName + ("" if ((version is None) and (self.version is None)) else self.version) + ".txt"
 
 	def _getItemSaveValue(configItem):
 		#this function returns the supplied configuration item in a form that can be turned to a JSON stringe])
@@ -190,7 +183,7 @@ class ConfigMem:
 
 	def show(self, mustPrint = False):
 		#this function either prints or returns a string containing all the configuration items and values
-		configStr = f"{self.fullName}\n{"\n".join([f"{itemName} : {self.itemDict[itemName].value}" for itemName in list(self.itemDict.keys())])}"
+		configStr = f"{self.name + ("" if (self.version is None) else f" {self.version}")}\n{"\n".join([f"{itemName} : {self.itemDict[itemName].value}" for itemName in list(self.itemDict.keys())])}"
 		if mustPrint:
 			print(configStr)
 		else:
