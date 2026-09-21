@@ -132,7 +132,7 @@ class ConfigMem:
 
 	def getSaveFileName(self, version = None):
 		#this function returns the file name for the current config object with the given version
-		return self.baseFileName + ("" if ((version is None) and (self.version is None)) else self.version) + ".txt"
+		return self.baseFileName + ("" if ((version is None) and (self.version is None)) else (self.version if (version is None) else version)) + ".txt"
 
 	def _getItemSaveValue(configItem):
 		#this function returns the supplied configuration item in a form that can be turned to a JSON stringe])
