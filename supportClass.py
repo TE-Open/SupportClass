@@ -1,9 +1,14 @@
-import os
-import inspect
+from __future__ import annotations
+
 import ast
-import weakref
-import json
 import dataclasses
+import inspect
+import json
+import os
+import weakref
+from collections.abc import Callable
+from typing import Any, cast
+
 
 class ConfigMem:
 	@dataclasses.dataclass
@@ -14,31 +19,32 @@ class ConfigMem:
 		type: type
 		isValidClass: bool
 		initArgCount: int
-		value: ... #the value of a configuration item can be of any type
+		value: Any
 
 		def __repr__(self):
 			return f"{self.__class__.__name__}(name={self.name}, value={self.value})"
 
-	def __init__(self, name, configItems, configDir, configFile = "", owner = None, autoSync = False, versionRequired = True):
+	def __init__(self, name: str, configItems: tuple[tuple[str, bool, type, Any], ...], owner: object, configDir: str, configFile: str = "", autoSync: bool = False, versionRequired: bool = True):
 		#the configuration memory class is used to easily save and load configurations to and from text files
-		self.dirPath = configDir
-		self.hasFile = (configFile != "")
-		self.baseFileName = configFile
-		self.name = name
-		self.version = None
-		self.owner = None if (owner is None) else weakref.proxy(owner)
-		self.autoSync = bool(autoSync) if (not owner is None) else False
-		self.versionRequired = bool(versionRequired)
+		self.dirPath: str = configDir
+		self.hasFile: bool = (configFile != "")
+		self.baseFileName: str = configFile
+		self.name: str = name
+		self.version: str = ""
+		self.owner: object = weakref.proxy(owner)
+		self.autoSync: bool = bool(autoSync) if (not owner is None) else False
+		self.versionRequired: bool = bool(versionRequired)
 		#build the item dictionary, if the configuration item list is valid
-		self.itemDict = {}
+		self.itemDict: dict = {}
 		if not type(configItems) in (tuple, list): raise TypeError("CONFLIST", self.name + " - Configuration items argument is not a list")
+		itemVal: Any = None
 		for confItem in configItems:
 			if not type(confItem) in (tuple, list): raise TypeError("ITEMLIST", self.name + " - One of the configuration items is not a list")
 			if not (len(confItem) == 4): raise ValueError("ITEMLEN", self.name + " - One of the configuration items has the wrong number of elements")
 			#configuration items must have four elements : item key, item list signal, item type, and starting value
 			#checkif the the provided value is of the desired type, or can be converted to it. all builtin types are accepted, as well as classes with specific attributes, and no type
 			isList = bool(confItem[1])
-			isValidClass = ConfigMem._isTypeValidclass(confItem[2])
+			isValidClass = callable(confItem[2]) and (hasattr(confItem[2], "__dataclass_fields__") and hasattr(confItem[2], "serialize"))
 			if isList:
 				#if the item list depth is greater than 0, it is a list. attempt to convert it
 				if len(confItem[3]) == 0:
@@ -59,21 +65,21 @@ class ConfigMem:
 					except (TypeError, ValueError, OverflowError) as e:
 						raise TypeError("ITEMTYPE", self.name + " - The starting value for the " + confItem[0] + " configuration item does not match the item type") from e
 			#check that the item name matches an existing variable in the owner object, and create it if required
-			if (not self.owner is None) and (not confItem[0] in self.owner.__dict__):
+			if (not confItem[0] in self.owner.__dict__):
 				#create the new attribute in the owner class
 				setattr(self.owner, confItem[0], itemVal)
 			#copy the information into the releveant dictionaries
-			self.itemDict[confItem[0]] = ConfigMem.ConfigItem(confItem[0], isList, confItem[2], isValidClass, (confItem[2].__init__.__code__.co_argcount - 1) if isValidClass else 0, itemVal)
+			self.itemDict[confItem[0]] = ConfigMem.ConfigItem(confItem[0], isList, confItem[2], isValidClass, (len(inspect.signature(cast(Callable, confItem[2]).__init__).parameters) - 1) if isValidClass else 0, itemVal)
 
 	def __repr__(self):
-		return f"ConfigMem - {self.name + ("" if (self.version is None) else f" {self.version}")}"
+		return f"ConfigMem - {self.name + ("" if (self.version == "") else f" {self.version}")}"
 
-	def load(self, version = None):
+	def load(self, version: str | int = "") -> bool:
 		#this function tries to read the configuration file, if any, and load it into the configuration dictionary
 		if not self.hasFile: raise RuntimeError("NOFILENAME", self.name + " - No configuration file name specified")
-		if self.versionRequired and ((version is None) or (version == "")): raise RuntimeError("NOVERSION", self.name + " - Configuration version must not be empty")
+		if self.versionRequired and (version == ""): raise RuntimeError("NOVERSION", self.name + " - Configuration version must not be empty")
 		configFilePath = os.path.join(self.dirPath, self.getSaveFileName(version))
-		if not os.path.isfile(configFilePath): raise IOError("NOFILE", self.name + " - Configuration file not found at " + configFilePath)
+		if not os.path.isfile(configFilePath): raise OSError("NOFILE", self.name + " - Configuration file not found at " + configFilePath)
 		#load the confuguration file into the configuration dictionary
 		if (os.path.getsize(configFilePath) != 0):
 			#open the file and attempt to load it into the value dicionary with JSON
@@ -110,41 +116,40 @@ class ConfigMem:
 					newValDict[key] = self.itemDict[key].type(*newValDict[key])
 				else:
 					if not (type(newValDict[key]) == self.itemDict[key].type): raise TypeError("ITEMTYPE", f"{self.name} - Item {key} is of incorrect type in configuration file")
-			self.version = None if (version is None) else str(version)
+			self.version = str(version)
 			for key in commonKeys: self.itemDict[key].value = newValDict[key] #update the items with the new values
 			if self.autoSync: self.loadDefault()
 			return True
 		return False
 
-	def save(self, version = None):
+	def save(self, version: str | int = ""):
 		#this function saves the current configuration to a text file
 		if not self.hasFile: raise RuntimeError("NOFILENAME", self.name + " - No configuration file name specified")
 		#check that the version is not empty
-		if self.versionRequired and ((version == "") or ((version is None) and (self.version is None))): raise RuntimeError("NOVERSION", self.name + " - Configuration version must not be empty")
+		if self.versionRequired and ((version == "") and (self.version == "")): raise RuntimeError("NOVERSION", self.name + " - Configuration version must not be empty")
 		#if there is a version specified, switch the configuration version to match
-		if not version is None: self.version = str(version)
+		if version != "": self.version = str(version)
 		#get the configuration JSON string
 		if self.autoSync: self.saveDefault()
-		configStr = json.dumps({key:ConfigMem._getItemSaveValue(self.itemDict[key]) for key in self.itemDict})
+		def getItemSaveValue(configItem: ConfigMem.ConfigItem):
+			#this function returns the supplied configuration item in a form that can be turned to a JSON stringe])
+			if configItem.isValidClass: return [val.serialize() for val in configItem.value] if configItem.isList else configItem.value.serialize()
+			return configItem.value
+		configStr = json.dumps({key:getItemSaveValue(self.itemDict[key]) for key in self.itemDict})
 		#open or create the configuration file, then write the configuration to it
 		with open(os.path.join(self.dirPath, self.getSaveFileName(version)), "w") as file:
 			file.write(configStr)
 
-	def getSaveFileName(self, version = None):
+	def getSaveFileName(self, version: str | int = "") -> str:
 		#this function returns the file name for the current config object with the given version
-		return self.baseFileName + ("" if ((version is None) and (self.version is None)) else (self.version if (version is None) else str(version))) + ".txt"
+		return self.baseFileName + ("" if ((version == "") and (self.version == "")) else (self.version if (version == "") else str(version))) + ".txt"
 
-	def _getItemSaveValue(configItem):
-		#this function returns the supplied configuration item in a form that can be turned to a JSON stringe])
-		if configItem.isValidClass: return [val.serialize() for val in configItem.value] if configItem.isList else configItem.value.serialize()
-		return configItem.value
-
-	def get(self, itemName):
+	def get(self, itemName: str):
 		#this function tries to get a configuration item from the dictionary
 		if itemName in self.itemDict: return self.itemDict[itemName].value
 		raise NameError("ITEMNAME", self.name + " - Cannot find configuration item " + itemName)
 
-	def set(self, itemName, newVal):
+	def set(self, itemName: str, newVal: Any):
 		#this function puts the provided new value into the item of the given name, if the type matches
 		if not itemName in self.itemDict: raise NameError("ITEMNAME", self.name + " - Cannot find configuration item " + itemName)
 		#assign the new value to the dictionary, if it is correct
@@ -153,16 +158,16 @@ class ConfigMem:
 	def loadDefault(self):
 		#this function loads all the current configuration item values into the their associated variables
 		if self.owner is None: raise RuntimeError("NOOWNER", "This configuration object has no associated owner")
-		for itemName in self.itemDict.keys():
+		for itemName in self.itemDict:
 			self.owner.__dict__[itemName] = self.itemDict[itemName].value
 
 	def saveDefault(self):
 		#this function tries to save all associated variable values into their respective configuration item values
 		if self.owner is None: raise RuntimeError("NOOWNER", "This configuration object has no associated owner")
-		for itemName in self.itemDict.keys():
+		for itemName in self.itemDict:
 			self.itemDict[itemName].value = self._getValidValue(itemName, self.owner.__dict__[itemName])
 
-	def _getValidValue(self, itemName, newVal):
+	def _getValidValue(self, itemName: str, newVal: Any):
 		#this function checks that the provided value is of the correct type for the associated item, and converts it if necessary
 		if self.itemDict[itemName].isList:
 			try:
@@ -181,7 +186,7 @@ class ConfigMem:
 					raise TypeError("ITEMTYPE", self.name + " - The new value for the " + itemName + " configuration item does not match the item type") from e
 		return itemVal
 
-	def show(self, mustPrint = False):
+	def show(self, mustPrint: bool = False):
 		#this function either prints or returns a string containing all the configuration items and values
 		configStr = f"{self.name + ("" if (self.version is None) else f" {self.version}")}\n{"\n".join([f"{itemName} : {self.itemDict[itemName].value}" for itemName in list(self.itemDict.keys())])}"
 		if mustPrint:
@@ -189,15 +194,12 @@ class ConfigMem:
 		else:
 			return configStr
 
+	@staticmethod
 	def _convertListValueType(valList, valType):
 		#this function attemtps to convert all base elements in the supplied list to the supplied type, if necessary
 		if (valType is None): return valList
 		if (len(valList) == 0): return ()
 		return tuple([(valType[val] if (type(val) != valType) else val) for val in valList])
-
-	def _isTypeValidclass(type):
-		#this function returns true if the provided type is a valid class. a class is valid if it has dataclass fields and a function called serialize
-		return ((not type is None) and hasattr(type, "__dataclass_fields__") and hasattr(type, "serialize"))
 
 class DoBase:
 	def __init__(self):
@@ -248,7 +250,7 @@ class DoBase:
 			#populate the list with the default if there are any, and get the count pf required arguments
 			reqArgCount = 0
 			for i in range(argCount):
-				if not fSig.parameters[keyT[i]].default == inspect.Parameter.empty:
+				if fSig.parameters[keyT[i]].default != inspect.Parameter.empty:
 					argList[i] = fSig.parameters[keyT[i]].default
 					if reqArgCount == 0: reqArgCount = i
 			if reqArgCount == 0: reqArgCount = argCount
@@ -292,9 +294,7 @@ class DoBase:
 								#and finally boolean conversion before simply returning the string value
 								argVal = boolD.get(argVal.lower(), argVal)
 								#if the value is still a string, and if the first 5 characters are "self.", then try to find an instance variable with the correct name, and substitute it instead
-								if (type(argVal) == str) and (len(argVal) > 5) and (argVal[0:5] == "self."):
-									if argVal[5:] in self.__dict__:
-										argVal = self.__dict__[argVal[5:]]
+								if (type(argVal) == str) and (len(argVal) > 5) and (argVal[0:5] == "self.") and (argVal[5:] in self.__dict__): argVal = self.__dict__[argVal[5:]]
 						argList[argPos] = argVal
 			#call the function with arguments, if there are any, and if none of them are missing
 			if reqArgCount <= 0:
@@ -303,99 +303,3 @@ class DoBase:
 			else:
 				print("\nAbort " + func.__name__ + " call : missing " + str(reqArgCount) + " arguments\n")
 				return None
-
-class VSetBase:
-	def __init__(self, varCol):
-		#this is a base class to add the vset (variable set) function to a derived class
-		self.__varCount = len(varCol)
-		#store the names, diminutives, and types in the supplied variable collection
-		varName = [""] * self.__varCount
-		varNameDim = [""] * self.__varCount
-		varNameLow = [""] * self.__varCount
-		varNameDimLow = [""] * self.__varCount
-		varType = [None] * self.__varCount
-		for i in range(self.__varCount):
-			varName[i] = varCol[i][0]
-			if not varName[i] in self.__dict__: raise Exception("\"" + varName[i] + "\" is not a variable in " + self.__class__.__name__ + " class")
-			varNameLow[i] = varName[i].lower()
-			varNameDim[i] = varCol[i][1]
-			varNameDimLow[i] = varNameDim[i].lower()
-			varType[i] = varCol[i][2]
-		self.__varCol = {"name" : tuple(varName), "namelow" : tuple(varNameLow), "namedim" : tuple(varNameDim), "namedimlow" : tuple(varNameDimLow), "type" : tuple(varType)}
-
-	def vset(self):
-		#this function helps quickly assign new values to the variables stored in the variable collection
-		vsetStr = "Input new values for variable :\n"
-		for i in range(self.__varCount):
-			vsetStr += (self.__varCol["name"][i] + "/" + self.__varCol["namedim"][i] + " = " + str(self.__dict__[self.__varCol["name"][i]]) + ("\n" if ((i + 1) % 4 == 0) else "  ---  "))
-		vsetStr = vsetStr.strip(" -\n") + "\n"
-		print(vsetStr)
-		#get the user input
-		cmdStr = input()
-		cmdArr = cmdStr.strip().split(" ")
-		#for each commnad, check that they are either positional (no "=" sign in the command"), or if they are named, that the name correspond to valid name or diminutive
-		pos = 0
-		varChange = [False] * self.__varCount
-		varVal = [None] * self.__varCount
-		boolD = {"true":True, "t":True, "false":False, "f":False}
-		hasValid = False
-		for cmd in cmdArr:
-			if (cmd != ""):
-				#if the argument is not empty, see if it is named or positional
-				varArr = cmd.split("=")
-				if len(varArr) == 2:
-					#argument is named
-					varl = varArr[0].lower()
-					varPos = (self.__varCol["namelow"].index(varl) if (varl in self.__varCol["namelow"]) else (self.__varCol["namedimlow"].index(varl) if (varl in self.__varCol["namedimlow"]) else -1))
-					val = varArr[1]
-				else:
-					#argument is positional
-					varPos = pos
-					val = varArr[0]
-					pos += 1
-				#if the argument position is too high, exit
-				if varPos >= self.__varCount:
-					print("\nToo many values. There are only " + str(self.__varCount) + " variables")
-					return
-				#if there was a valid argument, store it in the argument list
-				if varPos != -1:
-					#attempt conversions according to the associated type of the variable
-					if self.__varCol["type"][varPos] == bool:
-						#if it is a boolean, try to convert it using the boolean value dictionary
-						vall = val.lower()
-						if not vall in boolD:
-							print("Cannot convert supplied value for " + self.__varCol["name"][varPos] + " to bool")
-							return
-						varVal[varPos] = boolD[vall]
-					elif self.__varCol["type"][varPos] in (list, tuple):
-						#if it is a list, try to convert it via literal evaluation
-						valid = False
-						if val[0] in ("[", "("):
-							try:
-								varVal[varPos] = ast.literal_eval(val)
-								valid = True
-							except Exception:
-								pass
-						if not valid:
-							print("Cannot convert supplied value for " + self.__varCol["name"][varPos] + " to a list or tuple")
-							return
-					else:
-						#otherwise attempt to convert it according to the type
-						try:
-							varVal[varPos] = self.__varCol["type"][varPos](val)
-						except Exception:
-							print("Cannot convert supplied value for " + self.__varCol["name"][varPos] + " to " + self.__varCol["type"][varPos].__name__)
-							return
-					varChange[varPos] = True
-					hasValid = True
-		#check at least one variable was valid
-		if not hasValid:
-			print("No valid command found")
-			return
-		#go through the list of variables and change the requested ones
-		changedStr = ""
-		for i in range(self.__varCount):
-			if varChange[i]:
-				changedStr += self.__varCol["name"][i] + ", "
-				self.__dict__[self.__varCol["name"][i]] = varVal[i]
-		print("Changed values for variables " + changedStr.strip(", "))
